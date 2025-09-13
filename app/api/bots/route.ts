@@ -2,11 +2,24 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { User } from '@/models/user';
+import connectDb from '@/lib/mongodb';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
+// Generate referral code
+const generateRefCode = (length: number = 6): string => {
+  const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ123456789'
+  let userRefCode = ''
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * chars.length)
+    userRefCode += chars [randomIndex]
+  }
+  return userRefCode
+};
+
 export async function POST(req: NextRequest) {
+  await connectDb();
   const update = await req.json();
 
   // Check if it's a /start command
@@ -14,25 +27,51 @@ export async function POST(req: NextRequest) {
   const username = update?.message?.from?.username ?? 'Anonymous';
   const messageText = update?.message?.text;
   const chatId = update?.message?.chat?.id;
+  const isBot = Boolean(update?.message.is_bot);
   // const payment = update?.message?.successful_payment;
+
+  console.log('Incoming request...');
+  console.log('userId:', userId);
+  console.log('username:', username);
 
   if (!userId || !chatId) {
     return new Response('Invalid Telegram user', { status: 400 });
   }
 
+  if (isBot) {
+    return NextResponse.json({ error: 'Bots are not allowed' }, { status: 400 });
+  } 
+
+  let user = await User.findOne({ userId });
+
   // for /start command
   if (messageText === '/start' && chatId) {
-    await User.updateOne(
-      { userId },
-      {
-        $set: {
-          userId,
-          chatId,
-          username,
-        },
-      },
-      { upsert: true }
-    );
+    if (!user) {
+      let refCode = '';
+      let isUnique = false;
+
+      while (!isUnique) {
+        refCode = generateRefCode();
+        const existingUser = await User.findOne({ refCode });
+        if (!existingUser) isUnique = true
+      }
+
+      user = await User.create({
+        userId,
+        username,
+        isBot,
+        chatId: chatId,
+        balance: 10,
+        referrals: 0,
+        referredUsers: [],
+        taskCompleted: 0,
+        completedTasks: [],
+        verifiedTasks: [],
+        claimedTasks: [],
+        startedTasks: [],
+        refCode,
+      });
+    }
 
     const replyText = 
     `🐶 Ready to earn like a good pup?\n\n` +
